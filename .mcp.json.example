@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "water-quality-mcp": {
+      "command": "python",
+      "args": ["-m", "water_quality_mcp.server"],
+      "env": {
+        "AMAP_KEY": "your-amap-key-here",
+        "CLOUD_TOKEN": "your-starcloud-token-here",
+        "DEEPSEEK_API_KEY": "your-deepseek-key-here"
+      }
+    }
+  }
+}

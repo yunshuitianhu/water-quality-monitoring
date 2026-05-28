@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Secrets
+.env
+.mcp.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude local settings (user-specific paths and keys)
+.claude/
+
+# Temp/utility scripts
+_convert_docs.py
+_convert_pdf.py
+
+# Large media files (>100MB GitHub limit)
+*.mp4
+*.avi
+*.mov
+
+# Project generated files
+_uploaded_data.xlsx
+time_series.png
+trace_map.html
+cross_validation.png
+correlation_heatmap.png
+river_hydro_profile.png
+river_discharge_profile.png
+river_wq_contour.png
+river_wq_profile.png
+river_wq_timeseries.png
+river_dashboard.png
+river_pollution_animation.html
+
+# Generated data exports
+anomaly_results.csv
+processed_water_data.csv
+final_trace_report.txt
+river_model_export.json
+
+# Test files
+test_heatmap_min.html
+test_map_animation.html
+test_simple_heat.html
+test_dual_view.html
+test_plotly_anim.html
