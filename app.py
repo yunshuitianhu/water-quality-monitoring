@@ -1079,7 +1079,7 @@ with tab2:
                     st.rerun()
         with open("trace_map.html", "r", encoding="utf-8") as f:
             html = f.read()
-        st.components.v1.html(html, height=600, scrolling=True)
+        st.iframe("trace_map.html", height=600)
         st.download_button("下载交互式地图", html, file_name="trace_map.html", mime="text/html")
     else:
         st.info("尚未生成溯源地图")
@@ -1216,7 +1216,7 @@ with tab3:
             with open(anim_file, "r", encoding="utf-8") as f:
                 st.session_state.anim_html = f.read()
             st.session_state.anim_file_size = current_size
-        st.components.v1.html(st.session_state.anim_html, height=700, scrolling=True)
+        st.iframe(anim_file, height=700)
         st.caption(f"文件: {anim_file} ({current_size/1024:.0f} KB)")
         with open(anim_file, "rb") as f:
             st.download_button("📥 下载动画", f, file_name=anim_file, mime="text/html")
