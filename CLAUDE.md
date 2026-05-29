@@ -12,8 +12,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run the Streamlit app
 streamlit run app.py
 
+# One-click launcher (Windows)
+双击 启动.bat
+
 # Run MCP server (for Claude Code integration)
 python -m water_quality_mcp.server
+
+# Run smoke test (validates all core modules)
+python test_smoke.py
+# Expected: 8/8 pass
 
 # Run pollution trace-back animation builder (standalone, uses default Excel)
 python build_animation.py
@@ -30,7 +37,7 @@ tool_river_hydro_simulation(state, duration_h=6.0, dt_s=120)
 print(tool_river_pollution_event(state, pollutant_type='ammonia', load_kg=200))
 "
 
-# Test HEC-RAS COM connectivity
+# Test HEC-RAS COM connectivity (optional, Windows only)
 python -c "import win32com.client; c=win32com.client.Dispatch('RAS70.HECRASController'); print(c.HECRASVersion)"
 ```
 
@@ -154,8 +161,10 @@ On new data upload, `load_data()` performs a full reset:
 
 ## Known pitfalls
 
+- **`st.iframe` requires absolute file paths**: `st.iframe("trace_map.html")` → 404 because the bare filename is treated as a URL path. Use `os.path.join(os.path.dirname(__file__), "trace_map.html")` for local files. `st.components.v1.html()` was deprecated (removed after 2026-06-01).
 - **`generate_yayao_cross_sections` parameter order**: `mannings_n` is 8th parameter, `bottom_width_m` is 5th. Always use keyword args.
 - **WQResult has no `concentration` attribute**: use `wq.ammonia`, `wq.cbod`, `wq.dissolved_oxygen` directly. See `_get_wq_conc()` helper in app.py.
+- **API key naming**: canonical name is `DEEPSEEK_API_KEY`. Code also reads `DASHSCOPE_API_KEY` for backward compatibility. `.env.example` and setup wizard both write `DEEPSEEK_API_KEY`.
 - **HEC-RAS COM hangs**: kill leftover `Ras.exe` in Task Manager if `Project_Open` hangs.
 - **Preissmann solver**: 6h/30s is stable; longer durations (>12h) produce NaN. Newton tolerance is 0.001 (1mm), not smaller. NaN guard reverts to previous timestep.
 - **HEC-RAS 7.0 geometry format**: cross sections use `Type RM Length L Ch R = 1 ,<station>,<L>,<C>,<R>` line (no `Node Name=`/`River Station=`), Manning n without leading zero (`.033` not `0.033`), fixed-width 8-char columns.
@@ -166,12 +175,16 @@ On new data upload, `load_data()` performs a full reset:
 - **`calc_black_score_vectorized` returns numpy array, not pandas Series**: use `scores[i]` not `scores.iloc[i]`.
 - **Tool return truncation**: `process_user_message` in app.py truncates tool results at 2000 chars (4000 for `get_comprehensive_summary`). Keep tool return JSONs concise.
 - **`RiverModelState` is recreated on data switch**: tab3 model state is lost when uploading new data — user must re-run the river model.
+- **Font discovery**: use `font_utils.discover_font()` (cross-platform) rather than hardcoding `C:/Windows/Fonts/simhei.ttf`. `app.py` and `visualization.py` both use this now.
+- **`启动.bat` port handling**: auto-tries 8501 → 8502 → 8503 on conflict. Does NOT kill existing processes.
 
 ## Environment
 
-- Windows 11, Python 3.14
-- Venv: create with `python -m venv .venv` then `pip install -r requirements.txt`
-- HEC-RAS 7.0 (optional) — COM: run `_Register_New_RAS_and_RASMapper_Files.bat` as admin
-- API keys in `.env` (DashScope) and `.mcp.json` (DeepSeek, AMap, StarCloud)
+- Developer machine: Windows 11, Python 3.14
+- Target: Python 3.10 ~ 3.12 (recommend 3.11); cross-platform (Windows/macOS/Linux)
+- Install: `pip install -r requirements.txt` (loose) or `pip install -r requirements-lock.txt` (pinned versions)
+- HEC-RAS 7.0 (optional, Windows only) — COM: run `_Register_New_RAS_and_RASMapper_Files.bat` as admin
+- API keys configured via first-run setup wizard → saved to `.env` (`DEEPSEEK_API_KEY`) and `.mcp.json`
 - Streamlit config: max upload 2048 MB (`.streamlit/config.toml`)
 - Key pip packages: `streamlit`, `mcp>=1.0`, `pandas`, `numpy`, `scipy`, `scikit-learn`, `opencv-python`, `matplotlib`, `folium`, `openai`, `openpyxl`, `requests`
+- Test: `python test_smoke.py` (8 tests: imports, Excel, black-spots, hydro, WQ, charts)
