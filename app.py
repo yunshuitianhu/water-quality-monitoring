@@ -42,12 +42,10 @@ if "cross_validation_result" not in st.session_state: st.session_state.cross_val
 if "chart_captions" not in st.session_state: st.session_state.chart_captions = {}
 if "river_state" not in st.session_state: st.session_state.river_state = RiverModelState()
 if "font_prop" not in st.session_state:
-    font_prop = None
-    for fp in ["C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/msyh.ttc"]:
-        if os.path.exists(fp): font_prop = fm.FontProperties(fname=fp); break
+    from water_quality_mcp.src.water_quality_mcp.font_utils import discover_font, configure_matplotlib_font
+    font_prop = discover_font()
     st.session_state.font_prop = font_prop
-    plt.rcParams['font.family'] = font_prop.get_name() if font_prop else 'sans-serif'
-    plt.rcParams['axes.unicode_minus'] = False
+    configure_matplotlib_font(font_prop)
 
 # ---------- API 密钥管理 ----------
 
@@ -60,9 +58,13 @@ def _load_api_keys_from_files():
         with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("DASHSCOPE_API_KEY="):
+                if line.startswith("DEEPSEEK_API_KEY="):
                     v = line.split("=", 1)[1].strip()
                     if v and "your-" not in v:
+                        keys["deepseek"] = v
+                elif line.startswith("DASHSCOPE_API_KEY="):
+                    v = line.split("=", 1)[1].strip()
+                    if v and "your-" not in v and not keys["deepseek"]:
                         keys["deepseek"] = v
     # 读 .mcp.json
     mcp_path = os.path.join(os.path.dirname(__file__), ".mcp.json")
@@ -90,7 +92,7 @@ def _save_api_keys_to_files(deepseek_key, amap_key, starcloud_token):
     root = os.path.dirname(__file__)
     # 写 .env
     with open(_os.path.join(root, ".env"), "w", encoding="utf-8") as f:
-        f.write(f"DASHSCOPE_API_KEY={deepseek_key}\n")
+        f.write(f"DEEPSEEK_API_KEY={deepseek_key}\n")
     # 写 .mcp.json
     mcp_config = {
         "mcpServers": {
@@ -317,13 +319,33 @@ def extract_video(video_file, interval=10):
 # ---------- 工具函数 ----------
 def tool_data_summary():
     df = st.session_state.df
-    if df is None: return "数据未加载"
-    s = df.agg({'ammonia_nitrogen':['mean','max'],'dissolved_oxygen':['mean','min'],'turbidity':['mean','max'],'ph':['mean','min','max'],'cod':['mean','max']})
-    return json.dumps({"记录数":len(df),"时间范围":f"{df['datetime'].min()} ~ {df['datetime'].max()}",
-                       "氨氮(mg/L)":{"均值":round(s['ammonia_nitrogen']['mean'],2),"最大":round(s['ammonia_nitrogen']['max'],2)},
-                       "溶解氧(mg/L)":{"均值":round(s['dissolved_oxygen']['mean'],2),"最小":round(s['dissolved_oxygen']['min'],2)},
-                       "浑浊度(NTU)":{"均值":round(s['turbidity']['mean'],1),"最大":round(s['turbidity']['max'],1)},
-                       "pH":{"均值":round(s['ph']['mean'],2),"最小":round(s['ph']['min'],2),"最大":round(s['ph']['max'],2)}}, ensure_ascii=False)
+    if df is None or len(df) == 0: return "数据未加载或无有效记录"
+    # 只聚合实际存在的列
+    avail_cols = [c for c in ['ammonia_nitrogen','dissolved_oxygen','turbidity','ph','cod'] if c in df.columns]
+    if not avail_cols: return "数据中未检测到可识别的监测指标列"
+    s = df[avail_cols].agg(['mean','max','min'])
+    # 安全的时间范围
+    if 'datetime' in df.columns:
+        dt_min = df['datetime'].min()
+        dt_max = df['datetime'].max()
+        time_range = f"{dt_min} ~ {dt_max}" if pd.notna(dt_min) else "时间解析失败"
+    else:
+        time_range = "无时间列"
+    result = {"记录数": len(df), "时间范围": time_range}
+    col_labels = {
+        'ammonia_nitrogen': ('氨氮(mg/L)', 'mean', 'max'),
+        'dissolved_oxygen': ('溶解氧(mg/L)', 'mean', 'min'),
+        'turbidity': ('浑浊度(NTU)', 'mean', 'max'),
+        'ph': ('pH', 'mean', 'min'),
+        'cod': ('COD(mg/L)', 'mean', 'max'),
+    }
+    for col, (label, s1, s2) in col_labels.items():
+        if col in s.columns:
+            v1 = s[col].get(s1, 0)
+            v2 = s[col].get(s2, 0)
+            result[label] = {"均值" if s1=='mean' else s1: round(float(v1), 2),
+                           "最大" if s2=='max' else "最小": round(float(v2), 2)}
+    return json.dumps(result, ensure_ascii=False, default=str)
 
 # ---------- 黑点分析辅助函数 ----------
 def tool_find_black_spots():
@@ -938,31 +960,38 @@ def process_user_message(user_text, api_key, amap_key, cloud_token=None, system_
     client = OpenAI(base_url=BASE_URL, api_key=api_key)
     max_turns = 15
     turn = 0
-    while turn < max_turns:
-        turn += 1
-        resp = client.chat.completions.create(model=MODEL_NAME, messages=msgs, tools=tools, tool_choice="auto", temperature=0.1)
-        msg = resp.choices[0].message; msgs.append(msg)
-        if not msg.tool_calls:
-            msgs = _trim_tool_messages(msgs)
-            st.session_state.full_messages = msgs
-            _ensure_charts(amap_key, cloud_token)
-            return msg.content or ""
-        for tc in msg.tool_calls:
-            raw = json.loads(tc.function.arguments) if tc.function.arguments else {}
-            res = execute_tool(tc.function.name, raw, api_key, amap_key, cloud_token)
-            # 截断过长的工具返回，防止上下文爆炸 (综合分析摘要放宽到4000)
-            limit = 4000 if tc.function.name == "get_comprehensive_summary" else 2000
-            if len(res) > limit:
-                res = res[:limit] + "\n...(已截断)"
-            msgs.append({"role":"tool","tool_call_id":tc.id,"content":res})
-    # 兜底：超过最大轮次后强制结束
-    msgs.append({"role":"user","content":"已达到最大分析轮次。请基于已完成的分析给出最终结论，禁止再调用工具。"})
-    final = client.chat.completions.create(model=MODEL_NAME, messages=msgs, temperature=0.1)
-    msgs.append(final.choices[0].message)
-    msgs = _trim_tool_messages(msgs)
-    st.session_state.full_messages = msgs
-    _ensure_charts(amap_key, cloud_token)
-    return final.choices[0].message.content or ""
+    try:
+        while turn < max_turns:
+            turn += 1
+            resp = client.chat.completions.create(model=MODEL_NAME, messages=msgs, tools=tools, tool_choice="auto", temperature=0.1)
+            msg = resp.choices[0].message; msgs.append(msg)
+            if not msg.tool_calls:
+                msgs = _trim_tool_messages(msgs)
+                st.session_state.full_messages = msgs
+                _ensure_charts(amap_key, cloud_token)
+                return msg.content or ""
+            for tc in msg.tool_calls:
+                raw = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                res = execute_tool(tc.function.name, raw, api_key, amap_key, cloud_token)
+                limit = 4000 if tc.function.name == "get_comprehensive_summary" else 2000
+                if len(res) > limit:
+                    res = res[:limit] + "\n...(已截断)"
+                msgs.append({"role":"tool","tool_call_id":tc.id,"content":res})
+        # 兜底：超过最大轮次后强制结束
+        msgs.append({"role":"user","content":"已达到最大分析轮次。请基于已完成的分析给出最终结论，禁止再调用工具。"})
+        final = client.chat.completions.create(model=MODEL_NAME, messages=msgs, temperature=0.1)
+        msgs.append(final.choices[0].message)
+        msgs = _trim_tool_messages(msgs)
+        st.session_state.full_messages = msgs
+        _ensure_charts(amap_key, cloud_token)
+        return final.choices[0].message.content or ""
+    except Exception as e:
+        err_msg = str(e)
+        if "api_key" in err_msg.lower() or "auth" in err_msg.lower() or "401" in err_msg:
+            return "API Key 无效或未配置，请在侧边栏填写有效的 DeepSeek API Key"
+        if "timeout" in err_msg.lower() or "connect" in err_msg.lower():
+            return "无法连接 DeepSeek API，请检查网络连接后重试"
+        return f"分析过程出错: {err_msg[:200]}"
 
 # ---------- UI ----------
 st.title("🌊 水质监测与污染溯源助手")
@@ -982,7 +1011,9 @@ with st.sidebar:
                                   value=st.session_state.get("_starcloud_token", ""),
                                   help="https://datacloud.geovisearth.com 注册")
     uploaded_file = st.file_uploader("上传走航数据 (xlsx/xls/csv)", type=["xlsx","xls","csv"])
-    uploaded_video = st.file_uploader("上传样本视频 (可选)", type=["mp4","avi","mov"])
+    uploaded_video = st.file_uploader("上传样本视频 (可选, mp4/avi/mov)", type=["mp4","avi","mov"])
+    if uploaded_video is not None:
+        st.caption("⚠ 大视频文件上传需要时间，请等待文件名出现后再点击「加载数据」")
     if uploaded_file and st.button("加载数据"):
         with st.spinner("加载数据..."): msg = load_data(uploaded_file); st.success(msg)
         if uploaded_video:
@@ -1077,9 +1108,10 @@ with tab2:
                     with st.spinner("重新生成地图..."):
                         tool_generate_trace_map(amap_key, st_cloud_token)
                     st.rerun()
-        with open("trace_map.html", "r", encoding="utf-8") as f:
+        trace_path = os.path.join(os.path.dirname(__file__), "trace_map.html")
+        with open(trace_path, "r", encoding="utf-8") as f:
             html = f.read()
-        st.iframe("trace_map.html", height=600)
+        st.iframe(trace_path, height=600)
         st.download_button("下载交互式地图", html, file_name="trace_map.html", mime="text/html")
     else:
         st.info("尚未生成溯源地图")
@@ -1189,7 +1221,7 @@ with tab3:
                 try:
                     out_path = build_trace_animation(
                         excel_path="_uploaded_data.xlsx",
-                        output_path="river_pollution_animation.html",
+                        output_path=os.path.join(os.path.dirname(__file__), "river_pollution_animation.html"),
                         progress_callback=progress,
                     )
                     # 缓存到 session_state, 避免切换标签后丢失
@@ -1203,7 +1235,7 @@ with tab3:
                     st.error(f"生成失败: {e}")
 
     # 显示已生成的动画
-    anim_file = "river_pollution_animation.html"
+    anim_file = os.path.join(os.path.dirname(__file__), "river_pollution_animation.html")
     if os.path.exists(anim_file):
         st.markdown("---")
         captions = st.session_state.chart_captions

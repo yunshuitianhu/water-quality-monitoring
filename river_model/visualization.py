@@ -12,13 +12,11 @@ from .config import YayaoConfig
 from .state import HydroResult, WQResult
 
 # 中文字体
-_font_prop = None
-for _fp in ["C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/msyh.ttc"]:
-    if os.path.exists(_fp):
-        from matplotlib.font_manager import FontProperties
-        _font_prop = FontProperties(fname=_fp)
-        break
-
+try:
+    from water_quality_mcp.src.water_quality_mcp.font_utils import discover_font
+    _font_prop = discover_font()
+except Exception:
+    _font_prop = None
 
 def _fp():
     return _font_prop
